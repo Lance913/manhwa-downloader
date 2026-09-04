@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manhwa Panel Downloader</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #262b36;
+    --text: #e8eaf0;
+    --muted: #8b93a7;
+    --accent: #6d5efc;
+    --accent-hover: #7f72ff;
+    --error: #ff6b6b;
+    --success: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(circle at 50% -10%, #1c1f2a, var(--bg) 60%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+  p.subtitle {
+    margin: 0 0 24px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: #0d0f14;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+  .option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .mode-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .mode-choice {
+    flex: 1;
+    display: block;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .mode-choice input {
+    display: none;
+  }
+  .mode-choice .mode-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .mode-choice .mode-desc {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .mode-choice:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(109, 94, 252, 0.1);
+  }
+  button {
+    width: 100%;
+    margin-top: 22px;
+    padding: 13px 16px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:active:not(:disabled) { transform: scale(0.99); }
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .status {
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  .status.error { color: var(--error); }
+  .status.success { color: var(--success); }
+  .progress-track {
+    margin-top: 10px;
+    height: 6px;
+    border-radius: 999px;
+    background: #0d0f14;
+    overflow: hidden;
+    display: none;
+  }
+  .progress-track.visible { display: block; }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+  footer {
+    margin-top: 22px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Manhwa Panel Downloader</h1>
+    <p class="subtitle">Paste a chapter link, and every page will be scanned, cropped into its individual panels/images, and packed into a ZIP for you to download &mdash; in the correct reading order.</p>
+
+    <label for="url">Chapter URL</label>
+    <input id="url" type="text" placeholder="https://asurascans.com/comics/.../chapter/101" autocomplete="off" spellcheck="false">
+
+    <div class="mode-group">
+      <label class="mode-choice">
+        <input type="radio" name="extractMode" value="panels" checked>
+        <div class="mode-title">Split into panels</div>
+        <div class="mode-desc">Crop each page into its individual panels</div>
+      </label>
+      <label class="mode-choice">
+        <input type="radio" name="extractMode" value="whole">
+        <div class="mode-title">Whole pages</div>
+        <div class="mode-desc">Keep each page image uncropped</div>
+      </label>
+    </div>
+
+    <label class="option" id="splitJointOption">
+      <input id="splitJoint" type="checkbox">
+      Try to split panels that touch with no visible gap (slower, experimental)
+    </label>
+
+    <label class="option" id="importanceOption">
+      <input id="importanceOnly" type="checkbox">
+      Only keep the most important-looking panels (size/detail/dialogue, no AI)
+    </label>
+    <label class="option" id="importanceAmountOption" style="display:none; margin-top:8px;">
+      Keep top
+      <select id="importanceAmount">
+        <option value="0.25">25%</option>
+        <option value="0.5" selected>50%</option>
+        <option value="0.75">75%</option>
+      </select>
+      of panels
+    </label>
+
+    <button id="downloadBtn">Download ZIP</button>
+
+    <div id="status" class="status"></div>
+    <div id="progressTrack" class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+
+    <footer>Processing happens on the server; nothing is stored. For personal use &mdash; please respect the source site's terms.</footer>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+(function () {
+  const urlInput = document.getElementById('url');
+  const splitJointCheckbox = document.getElementById('splitJoint');
+  const splitJointOption = document.getElementById('splitJointOption');
+  const importanceOnlyCheckbox = document.getElementById('importanceOnly');
+  const importanceOption = document.getElementById('importanceOption');
+  const importanceAmountOption = document.getElementById('importanceAmountOption');
+  const importanceAmountSelect = document.getElementById('importanceAmount');
+  const modeRadios = document.querySelectorAll('input[name="extractMode"]');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const statusEl = document.getElementById('status');
+  const progressTrack = document.getElementById('progressTrack');
+  const progressFill = document.getElementById('progressFill');
+
+  function currentMode() {
+    return document.querySelector('input[name="extractMode"]:checked').value;
+  }
+
+  function syncModeUI() {
+    const wholePage = currentMode() === 'whole';
+    splitJointOption.style.display = wholePage ? 'none' : 'flex';
+    importanceOption.style.display = wholePage ? 'none' : 'flex';
+    if (wholePage) importanceAmountOption.style.display = 'none';
+  }
+  modeRadios.forEach((radio) => radio.addEventListener('change', syncModeUI));
+  importanceOnlyCheckbox.addEventListener('change', () => {
+    importanceAmountOption.style.display = importanceOnlyCheckbox.checked ? 'flex' : 'none';
+  });
+  syncModeUI();
+
+  function setStatus(message, kind) {
+    statusEl.textContent = message || '';
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function setProgress(done, total) {
+    if (!total) {
+      progressTrack.classList.remove('visible');
+      return;
+    }
+    progressTrack.classList.add('visible');
+    progressFill.style.width = Math.round((done / total) * 100) + '%';
+  }
+
+  function sanitizeName(name) {
+    return (name || 'chapter')
+      .replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'chapter';
+  }
+
+  async function postJSON(path, body) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      throw new Error('Unexpected server response');
+    }
+    if (!res.ok) {
+      throw new Error(data.error || 'Request failed');
+    }
+    return data;
+  }
+
+  async function run() {
+    const url = urlInput.value.trim();
+    if (!url) {
+      setStatus('Please paste a chapter link first.', 'error');
+      return;
+    }
+
+    downloadBtn.disabled = true;
+    setProgress(0, 0);
+    setStatus('Fetching chapter page…');
+
+    const wholePage = currentMode() === 'whole';
+
+    try {
+      const scraped = await postJSON('/api/scrape', { url });
+      const images = scraped.images;
+      const referer = scraped.referer || '';
+      const title = sanitizeName(scraped.title);
+
+      const verb = wholePage ? 'Downloading pages' : 'Extracting panels';
+      setStatus(`Found ${images.length} page${images.length === 1 ? '' : 's'}. ${verb}…`);
+      setProgress(0, images.length);
+
+      const pagePanels = new Array(images.length);
+      const pageRatios = new Array(images.length);
+      const pagePanelStats = new Array(images.length);
+      let nextIndex = 0;
+      let completed = 0;
+      let failedPages = 0;
+      const CONCURRENCY = 3;
+      const RETRIES = 2;
+
+      async function fetchPage(i) {
+        for (let attempt = 0; attempt <= RETRIES; attempt++) {
+          try {
+            const result = await postJSON('/api/panels', {
+              url: images[i],
+              referer,
+              mode: 'bounding',
+              wholePage,
+              splitJointPanels: !wholePage && splitJointCheckbox.checked,
+            });
+            return result;
+          } catch (e) {
+            if (attempt < RETRIES) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          }
+        }
+        return null;
+      }
+
+      async function worker() {
+        while (true) {
+          const i = nextIndex++;
+          if (i >= images.length) return;
+          const result = await fetchPage(i);
+          if (result === null) {
+            pagePanels[i] = [];
+            failedPages++;
+          } else {
+            pagePanels[i] = result.panels || [];
+            pagePanelStats[i] = result.panelStats || [];
+            if (result.pageWidth && result.pageHeight) {
+              pageRatios[i] = result.pageHeight / result.pageWidth;
+            }
+          }
+          completed++;
+          setProgress(completed, images.length);
+          setStatus(`${verb}… (${completed}/${images.length} pages)`);
+        }
+      }
+
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, images.length) }, worker));
+
+      // Perceptual hash (dHash) of a base64 JPEG panel, used to spot the
+      // exact same promo graphic reused elsewhere in the chapter.
+      function hashPanel(b64) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const w = 9, h = 8;
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            const data = ctx.getImageData(0, 0, w, h).data;
+            const gray = new Array(w * h);
+            for (let p = 0; p < w * h; p++) {
+              gray[p] = 0.299 * data[p * 4] + 0.587 * data[p * 4 + 1] + 0.114 * data[p * 4 + 2];
+            }
+            let bits = 0n;
+            for (let y = 0; y < h; y++) {
+              for (let x = 0; x < w - 1; x++) {
+                bits = (bits << 1n) | (gray[y * w + x] > gray[y * w + x + 1] ? 1n : 0n);
+              }
+            }
+            resolve(bits);
+          };
+          img.onerror = () => resolve(null);
+          img.src = 'data:image/jpeg;base64,' + b64;
+        });
+      }
+      function hammingDistance(a, b) {
+        if (a === null || b === null) return 64;
+        let x = a ^ b, count = 0;
+        while (x > 0n) { count += Number(x & 1n); x >>= 1n; }
+        return count;
+      }
+
+      // Scanlation groups often splice a credit-card or "read this at
+      // our-site.com" ad graphic in as its own page at the very start or
+      // end of a chapter. Those pages are a visibly different shape from
+      // the chapter's real pages (which all share one consistent aspect
+      // ratio), so flag runs of odd-shaped pages at the edges - but never
+      // touch the middle, where an unusual ratio is more likely a real
+      // splash panel than an ad.
+      let adPagesSkipped = 0;
+      let adPanelsSkipped = 0;
+      const knownRatios = pageRatios.filter((r) => r);
+      if (knownRatios.length >= 6) {
+        const sorted = [...knownRatios].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const isOddShaped = (r) => r && Math.abs(r - median) / median > 0.3;
+        const consistentFraction = knownRatios.filter((r) => !isOddShaped(r)).length / knownRatios.length;
+
+        if (consistentFraction >= 0.6) {
+          const EDGE_SCAN_LIMIT = 5;
+          const trim = new Set();
+          for (let i = 0; i < Math.min(EDGE_SCAN_LIMIT, images.length); i++) {
+            if (!isOddShaped(pageRatios[i])) break;
+            trim.add(i);
+          }
+          for (let i = images.length - 1; i >= Math.max(0, images.length - EDGE_SCAN_LIMIT); i--) {
+            if (!isOddShaped(pageRatios[i])) break;
+            trim.add(i);
+          }
+
+          // The same ad graphic sometimes also gets embedded directly on a
+          // real page (sharing space with legit content) rather than only
+          // living on its own page - fingerprint every panel from the
+          // confirmed ad pages above, then strip exact/near-exact repeats
+          // of those fingerprints wherever else they show up.
+          if (trim.size) {
+            const adB64 = [];
+            for (const i of trim) for (const b64 of pagePanels[i] || []) adB64.push(b64);
+            const adHashes = (await Promise.all(adB64.map(hashPanel))).filter((h) => h !== null);
+
+            if (adHashes.length) {
+              const DIST_THRESHOLD = 8;
+              for (let i = 0; i < pagePanels.length; i++) {
+                if (trim.has(i) || !pagePanels[i] || !pagePanels[i].length) continue;
+                const hashes = await Promise.all(pagePanels[i].map(hashPanel));
+                const keepMask = pagePanels[i].map((b64, k) => {
+                  const isDup = adHashes.some((ah) => hammingDistance(hashes[k], ah) <= DIST_THRESHOLD);
+                  if (isDup) adPanelsSkipped++;
+                  return !isDup;
+                });
+                pagePanels[i] = pagePanels[i].filter((_, k) => keepMask[k]);
+                if (pagePanelStats[i]) pagePanelStats[i] = pagePanelStats[i].filter((_, k) => keepMask[k]);
+              }
+            }
+          }
+
+          for (const i of trim) {
+            if (pagePanels[i] && pagePanels[i].length) {
+              adPagesSkipped++;
+              pagePanels[i] = [];
+              pagePanelStats[i] = [];
+            }
+          }
+        }
+      }
+
+      // Optionally keep only the panels that look most important, ranked
+      // chapter-wide by cheap non-AI signals: panel size (splash panels
+      // tend to matter more), visual detail/edge density (action vs. an
+      // empty establishing shot), and enclosed white area (a proxy for
+      // speech/thought bubbles, i.e. dialogue).
+      let importancePanelsSkipped = 0;
+      if (!wholePage && importanceOnlyCheckbox.checked) {
+        const keepFraction = parseFloat(importanceAmountSelect.value) || 0.5;
+        const flat = [];
+        for (let i = 0; i < pagePanels.length; i++) {
+          const panels = pagePanels[i] || [];
+          const stats = pagePanelStats[i] || [];
+          for (let k = 0; k < panels.length; k++) {
+            flat.push({ i, k, stats: stats[k] || { areaRatio: 0, edgeDensity: 0, bubbleDensity: 0 } });
+          }
+        }
+        if (flat.length > 1) {
+          const minMax = (key) => {
+            const vals = flat.map((f) => f.stats[key]);
+            return [Math.min(...vals), Math.max(...vals)];
+          };
+          const [areaMin, areaMax] = minMax('areaRatio');
+          const [edgeMin, edgeMax] = minMax('edgeDensity');
+          const [bubbleMin, bubbleMax] = minMax('bubbleDensity');
+          const norm = (v, min, max) => (max > min ? (v - min) / (max - min) : 0);
+          for (const f of flat) {
+            f.score = 0.5 * norm(f.stats.areaRatio, areaMin, areaMax) +
+                      0.3 * norm(f.stats.edgeDensity, edgeMin, edgeMax) +
+                      0.2 * norm(f.stats.bubbleDensity, bubbleMin, bubbleMax);
+          }
+          const keepCount = Math.max(1, Math.round(flat.length * keepFraction));
+          const sorted = [...flat].sort((a, b) => b.score - a.score);
+          const keepSet = new Set(sorted.slice(0, keepCount).map((f) => `${f.i}:${f.k}`));
+
+          for (let i = 0; i < pagePanels.length; i++) {
+            const panels = pagePanels[i] || [];
+            if (!panels.length) continue;
+            pagePanels[i] = panels.filter((_, k) => keepSet.has(`${i}:${k}`));
+          }
+          importancePanelsSkipped = flat.length - keepCount;
+        }
+      }
+
+      setStatus('Building ZIP…');
+
+      const zip = new JSZip();
+      const folder = zip.folder(title);
+      let panelCount = 0;
+
+      // Camera-roll-style filenames, e.g. 2026_08_28_21_05_IMG_6533.JPG -
+      // the visible name only carries minute resolution (like a real
+      // camera/gallery export), while the underlying timestamp still
+      // advances a few seconds at a time behind the scenes so the ZIP's
+      // internal file dates and reading order stay consistent.
+      const pad = (n, w = 2) => String(n).padStart(w, '0');
+      const shotTime = new Date();
+      shotTime.setMinutes(shotTime.getMinutes() - (20 + Math.floor(Math.random() * 160)));
+      let imgCounter = 1000 + Math.floor(Math.random() * 8000);
+      function nextScreenshotName() {
+        const Y = shotTime.getFullYear();
+        const M = pad(shotTime.getMonth() + 1);
+        const D = pad(shotTime.getDate());
+        const h = pad(shotTime.getHours());
+        const m = pad(shotTime.getMinutes());
+        const stamp = new Date(shotTime);
+        shotTime.setSeconds(shotTime.getSeconds() + 5 + Math.floor(Math.random() * 40));
+        const num = imgCounter++;
+        return { name: `${Y}_${M}_${D}_${h}_${m}_IMG_${num}.JPG`, date: stamp };
+      }
+
+      for (let p = 0; p < pagePanels.length; p++) {
+        const panels = pagePanels[p] || [];
+        for (let k = 0; k < panels.length; k++) {
+          panelCount++;
+          const shot = nextScreenshotName();
+          folder.file(shot.name, panels[k], { base64: true, date: shot.date });
+        }
+      }
+
+      if (panelCount === 0) {
+        throw new Error(wholePage ? 'No pages could be downloaded from this chapter.' : 'No panels could be extracted from this chapter.');
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${title}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      const notes = [];
+      if (failedPages > 0) notes.push(`${failedPages} page${failedPages === 1 ? '' : 's'} failed to download and ${failedPages === 1 ? 'was' : 'were'} skipped`);
+      if (adPagesSkipped > 0) notes.push(`${adPagesSkipped} ad/credit page${adPagesSkipped === 1 ? '' : 's'} skipped`);
+      if (adPanelsSkipped > 0) notes.push(`${adPanelsSkipped} embedded ad panel${adPanelsSkipped === 1 ? '' : 's'} skipped`);
+      if (importancePanelsSkipped > 0) notes.push(`${importancePanelsSkipped} lower-importance panel${importancePanelsSkipped === 1 ? '' : 's'} left out`);
+      const note = notes.length ? ` (${notes.join('; ')})` : '';
+      setStatus(`Done — ${panelCount} images from ${images.length} pages.${note}`, failedPages > 0 ? 'error' : 'success');
+      setProgress(0, 0);
+    } catch (err) {
+      setStatus(err.message || String(err), 'error');
+      setProgress(0, 0);
+    } finally {
+      downloadBtn.disabled = false;
+    }
+  }
+
+  downloadBtn.addEventListener('click', run);
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') run();
+  });
+})();
+</script>
+</body>
+</html>

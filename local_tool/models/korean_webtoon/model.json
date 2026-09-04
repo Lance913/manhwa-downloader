@@ -1,0 +1,8 @@
+{
+	"width":640,
+	"height":640,
+	"model":"model.onnx",
+	"ratio":1,
+	"width_overlap":"0",
+	"height_overlap":"20"
+}
