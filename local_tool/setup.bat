@@ -17,5 +17,6 @@ py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 
 echo.
-echo Setup done. Run the tool with: run.bat --url "<chapter url>" --output-dir "%USERPROFILE%\Downloads\Manhwa Panels"
+echo Setup done. Double-click "Manhwa Downloader.vbs" in this folder to open it -
+echo no command prompt needed from here on. (Command-line alternative: run.bat --url "<chapter url>" --output-dir "%USERPROFILE%\Downloads\Manhwa Panels")
 pause

@@ -16,4 +16,5 @@ $PYTHON -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
 echo
-echo "Setup done. Run the tool with: ./run.sh --url \"<chapter url>\" --output-dir ~/Downloads/Manhwa Panels"
+echo "Setup done. Double-click 'Manhwa Downloader.app' in this folder to open it -"
+echo "no terminal needed from here on. (Command-line alternative: ./run.sh --url \"<chapter url>\" --output-dir ~/Downloads/\"Manhwa Panels\")"
