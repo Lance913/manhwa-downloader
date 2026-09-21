@@ -57,7 +57,8 @@ class Cancelled(Exception):
 
 
 def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
-                config=None, log=print, progress=None, should_cancel=None):
+                config=None, log=print, progress=None, should_cancel=None,
+                simple_output=False):
     """
     Runs the full extraction pipeline for one chapter.
 
@@ -65,7 +66,13 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
     progress(done, total): called as panels are written (total may be 0
     briefly before detection finishes).
     should_cancel(): polled periodically; raise Cancelled if it returns True.
-    Returns the metadata dict that also gets written to chapter.json.
+    simple_output: when True, writes only the cropped panel images
+    directly in <output_dir>/<title>/ (no pages/, debug/, chapter.json or
+    contact sheet). Used for multi-chapter batches, where those extras
+    would just be clutter multiplied by every chapter; the single-chapter
+    path (the default) is untouched.
+    Returns the metadata dict (also written to chapter.json unless
+    simple_output is True).
     """
     config = config or Config()
 
@@ -104,10 +111,17 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
     log(f"Pages: {len(pages)}  ->  strip {strip.width}x{strip.height}")
 
     base_out = os.path.join(output_dir, title)
-    panels_dir = os.path.join(base_out, "panels")
-    pages_dir = os.path.join(base_out, "pages")
-    debug_dir = os.path.join(base_out, "debug")
-    for d in (panels_dir, pages_dir, debug_dir):
+    if simple_output:
+        # Flat: the chapter folder itself holds just the panel images.
+        panels_dir = base_out
+        pages_dir = debug_dir = None
+        dirs_to_prep = (panels_dir,)
+    else:
+        panels_dir = os.path.join(base_out, "panels")
+        pages_dir = os.path.join(base_out, "pages")
+        debug_dir = os.path.join(base_out, "debug")
+        dirs_to_prep = (panels_dir, pages_dir, debug_dir)
+    for d in dirs_to_prep:
         os.makedirs(d, exist_ok=True)
         for f in os.listdir(d):
             if f.startswith(("panel_", "page_")) and f.lower().endswith((".jpg", ".png")):
@@ -129,7 +143,7 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
         cv2.imwrite(os.path.join(panels_dir, filename), crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
         record = d.as_dict()
         record["id"] = index
-        record["file"] = f"panels/{filename}"
+        record["file"] = filename if simple_output else f"panels/{filename}"
         record["pages"] = [i + 1 for i in strip.page_span(d.y1, d.y2)]
         panel_records.append(record)
         if progress:
@@ -137,21 +151,22 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
         if index % 25 == 0 or index == len(panels):
             log(f"  wrote {index}/{len(panels)} panels")
 
-    for i, page in enumerate(strip.pages):
-        check_cancel()
-        page_name = f"page_{i + 1:03d}"
-        cv2.imwrite(os.path.join(pages_dir, f"{page_name}.jpg"), page)
-        if config.debug:
-            raw_page = {name: _to_page_boxes(strip, dets, i) for name, dets in raw.items()}
-            merged_page = _to_page_boxes(strip, panels, i)
-            sus_page = []
-            for r in suspicious:
-                top, bottom = strip.offsets[i], strip.offsets[i + 1]
-                y1, y2 = max(r["y1"], top), min(r["y2"], bottom)
-                if y2 > y1:
-                    sus_page.append({"x1": r["x1"], "y1": y1 - top, "x2": r["x2"], "y2": y2 - top})
-            debug_image = draw_debug_image(page, raw_page, merged_page, sus_page)
-            cv2.imwrite(os.path.join(debug_dir, f"{page_name}_debug.jpg"), debug_image)
+    if not simple_output:
+        for i, page in enumerate(strip.pages):
+            check_cancel()
+            page_name = f"page_{i + 1:03d}"
+            cv2.imwrite(os.path.join(pages_dir, f"{page_name}.jpg"), page)
+            if config.debug:
+                raw_page = {name: _to_page_boxes(strip, dets, i) for name, dets in raw.items()}
+                merged_page = _to_page_boxes(strip, panels, i)
+                sus_page = []
+                for r in suspicious:
+                    top, bottom = strip.offsets[i], strip.offsets[i + 1]
+                    y1, y2 = max(r["y1"], top), min(r["y2"], bottom)
+                    if y2 > y1:
+                        sus_page.append({"x1": r["x1"], "y1": y1 - top, "x2": r["x2"], "y2": y2 - top})
+                debug_image = draw_debug_image(page, raw_page, merged_page, sus_page)
+                cv2.imwrite(os.path.join(debug_dir, f"{page_name}_debug.jpg"), debug_image)
 
     metadata = {
         "title": title,
@@ -161,10 +176,10 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
         "panels": panel_records,
         "possible_missing_panels": suspicious,
     }
-    with open(os.path.join(base_out, "chapter.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    write_contact_sheet(panels_dir, os.path.join(base_out, "contact_sheet.jpg"))
+    if not simple_output:
+        with open(os.path.join(base_out, "chapter.json"), "w") as f:
+            json.dump(metadata, f, indent=2)
+        write_contact_sheet(panels_dir, os.path.join(base_out, "contact_sheet.jpg"))
 
     log("")
     log(f"Done. {len(panels)} panels from {len(pages)} pages, {len(suspicious)} possible missed region(s) flagged.")
@@ -172,3 +187,55 @@ def run_chapter(output_dir, url=None, input_dir=None, title_override=None,
 
     metadata["output_dir"] = base_out
     return metadata
+
+
+def run_batch(urls, output_dir, config=None, log=print,
+              chapter_progress=None, panel_progress=None, should_cancel=None):
+    """
+    Runs run_chapter for every URL in sequence, each in simple_output mode
+    so the result is output_dir/<chapter title>/panel_001.jpg, ... with no
+    extra folders - one folder per link, images only. No limit on how many
+    URLs; a failing link is logged and skipped rather than aborting the
+    rest of the batch.
+
+    chapter_progress(done, total): called before/after each chapter.
+    panel_progress(done, total): forwarded from run_chapter for whichever
+    chapter is currently writing panels.
+    Returns a list of per-URL result dicts: {"url", "ok", and either
+    "title"/"panel_count" or "error"}.
+    """
+    config = config or Config()
+    total = len(urls)
+    results = []
+
+    for i, url in enumerate(urls, start=1):
+        log(f"=== Chapter {i}/{total}: {url} ===")
+        if chapter_progress:
+            chapter_progress(i - 1, total)
+        try:
+            metadata = run_chapter(
+                output_dir=output_dir,
+                url=url,
+                config=config,
+                log=log,
+                progress=panel_progress,
+                should_cancel=should_cancel,
+                simple_output=True,
+            )
+            results.append({
+                "url": url, "ok": True,
+                "title": metadata["title"],
+                "panel_count": len(metadata["panels"]),
+            })
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one bad link must not kill the batch
+            log(f"  FAILED: {exc}")
+            results.append({"url": url, "ok": False, "error": str(exc)})
+        if chapter_progress:
+            chapter_progress(i, total)
+
+    ok_count = sum(1 for r in results if r["ok"])
+    log("")
+    log(f"Batch done. {ok_count}/{total} chapter(s) succeeded.")
+    return results

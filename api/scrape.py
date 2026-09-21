@@ -5,6 +5,7 @@ in reading sequence.
 """
 
 from http.server import BaseHTTPRequestHandler
+import html
 import json
 import re
 from urllib.parse import urlparse, urljoin
@@ -27,11 +28,12 @@ READER_CONTAINER_HINTS = (
     "chapter-reader", "chapter-content", "chapter-img", "chapter-images",
     "reading-content", "read-container", "reader-area", "reader-content",
     "page-container", "comic-page", "viewer",
+    "readerarea",  # Madara-theme sites (e.g. kingofshojo.com) use this exact id, no hyphen
 )
 
 # Attributes, in preference order, that reader themes stash the real image
 # URL in - many lazy-load and only populate `src` with a loading spinner.
-IMAGE_SRC_ATTRS = ("src", "data-src", "data-original", "data-lazy-src", "data-url")
+IMAGE_SRC_ATTRS = ("src", "data-src", "data-original", "data-original-src", "data-lazy-src", "data-url")
 
 PLACEHOLDER_PATTERNS = ("loading", "spinner", "blank.gif", "data:image")
 
@@ -65,7 +67,34 @@ def _is_probably_noise(img):
     return any(k in haystack for k in NOISE_KEYWORDS)
 
 
+TS_READER_RE = re.compile(r"ts_reader\.run\((\{.*?\})\)\s*;?\s*</script>", re.S)
+
+
+def _extract_ts_reader_images(html_text, base_url):
+    """
+    Strategy 0: several WordPress reader themes (used by e.g. arenascan.com
+    and en-thunderscans.com) never put the real image URLs in the DOM at
+    all - the visible <img> tags are just loading placeholders, and the
+    actual ordered list ships as a JSON blob passed to a `ts_reader.run()`
+    call in an inline <script>. When present this is unambiguous ground
+    truth, so it's tried before any DOM-based strategy.
+    """
+    match = TS_READER_RE.search(html_text)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(1))
+        images = data["sources"][0]["images"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return []
+    return [urljoin(base_url, src) for src in images if isinstance(src, str) and src.strip()]
+
+
 def _extract_ordered_images(html, base_url):
+    ts_reader_images = _extract_ts_reader_images(html, base_url)
+    if ts_reader_images:
+        return ts_reader_images
+
     soup = BeautifulSoup(html, "html.parser")
 
     # Strategy 1: Asura Scans (and similar reader themes) mark every chapter
@@ -122,6 +151,34 @@ def _extract_ordered_images(html, base_url):
     return fallback
 
 
+CHAPTER_TITLE_RE = re.compile(r"^(.*?chapter\s*\d+(?:\.\d+)?)\b", re.I)
+
+
+def extract_title(html_text):
+    """
+    Chapter title from the page's <title> tag, with the site's own name
+    stripped off the end. Different sites glue it on with different
+    separators (" | Site", " - Site", " – Site" ...), so rather than
+    guess every separator, cut right after "Chapter <number>" - that
+    marker is reliable across sites and leaves the real title untouched
+    even when it contains its own hyphens (e.g. "Re-Zero").
+    """
+    match = re.search(r"<title>(.*?)</title>", html_text, re.I | re.S)
+    if not match:
+        return "chapter"
+    title = html.unescape(match.group(1))
+    title = re.sub(r"\s+", " ", title).strip()
+
+    chapter_cut = CHAPTER_TITLE_RE.search(title)
+    if chapter_cut:
+        return chapter_cut.group(1).strip()
+
+    # Fallback for pages without a "Chapter N" marker in the title at all.
+    title = title.split(" | ")[0].strip()
+    title = re.sub(r"\s*[-|]\s*Read\s+Online\b.*$", "", title, flags=re.I).strip()
+    return title
+
+
 class handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -160,12 +217,7 @@ class handler(BaseHTTPRequestHandler):
             if not images:
                 raise ValueError("Couldn't find any chapter page images on that link")
 
-            title_match = re.search(r"<title>(.*?)</title>", resp.text, re.I | re.S)
-            title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else "chapter"
-            # Strip common SEO suffixes like " | Asura Scans" or
-            # " - Read Online Free", " - Read Online For Free", etc.
-            title = title.split(" | ")[0].strip()
-            title = re.sub(r"\s*[-|]\s*Read\s+Online\b.*$", "", title, flags=re.I).strip()
+            title = extract_title(resp.text)
 
             # Most reader sites' image CDNs reject hotlink requests that
             # don't carry a Referer from the site itself - remember the

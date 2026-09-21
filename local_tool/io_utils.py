@@ -11,7 +11,7 @@ import numpy as np
 import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
-from scrape import _extract_ordered_images, REQUEST_HEADERS  # noqa: E402
+from scrape import _extract_ordered_images, extract_title, REQUEST_HEADERS  # noqa: E402
 from panels import _download_image  # noqa: E402
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
@@ -38,11 +38,7 @@ def load_from_url(url):
     if not images:
         raise ValueError("Couldn't find any chapter page images on that link")
 
-    title_match = re.search(r"<title>(.*?)</title>", resp.text, re.I | re.S)
-    title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else "chapter"
-    title = title.split(" | ")[0].strip()
-    title = re.sub(r"\s*[-|]\s*Read\s+Online\b.*$", "", title, flags=re.I).strip()
-    title = sanitize_name(title)
+    title = sanitize_name(extract_title(resp.text))
 
     referer = f"{parsed.scheme}://{parsed.netloc}/"
 

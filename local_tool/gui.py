@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from config import Config
-from runner import run_chapter, Cancelled
+from runner import run_chapter, run_batch, Cancelled
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "Manhwa Panels")
 
@@ -30,22 +30,31 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("Manhwa Panel Downloader")
-        root.geometry("640x520")
-        root.minsize(520, 420)
+        root.geometry("640x580")
+        root.minsize(520, 460)
 
         self.events = queue.Queue()
         self.cancel_flag = threading.Event()
         self.worker = None
         self.last_output_dir = None
+        self.batch_mode = False
+        self.pending_output_dir = None
+        self.chapter_label = ""
 
         pad = {"padx": 10, "pady": 6}
 
         form = ttk.Frame(root)
         form.pack(fill="x", **pad)
 
-        ttk.Label(form, text="Chapter URL").grid(row=0, column=0, sticky="w")
-        self.url_entry = ttk.Entry(form)
-        self.url_entry.grid(row=1, column=0, columnspan=2, sticky="ew")
+        ttk.Label(form, text="Chapter URL(s) - paste one per line for multiple chapters").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        url_frame = ttk.Frame(form)
+        url_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.url_entry = tk.Text(url_frame, height=4, wrap="none")
+        self.url_entry.pack(side="left", fill="both", expand=True)
+        url_scroll = ttk.Scrollbar(url_frame, orient="vertical", command=self.url_entry.yview)
+        url_scroll.pack(side="right", fill="y")
+        self.url_entry.configure(yscrollcommand=url_scroll.set)
         self.url_entry.focus()
 
         ttk.Label(form, text="Save to").grid(row=2, column=0, sticky="w", pady=(10, 0))
@@ -74,7 +83,6 @@ class App:
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(root, textvariable=self.status_var, anchor="w").pack(fill="x", padx=10, pady=(0, 8))
 
-        root.bind("<Return>", lambda e: self.start_download())
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._poll_queue()
@@ -93,9 +101,9 @@ class App:
     def start_download(self):
         if self.worker and self.worker.is_alive():
             return
-        url = self.url_entry.get().strip()
-        if not url:
-            messagebox.showwarning("Missing URL", "Paste a chapter URL first.")
+        urls = [line.strip() for line in self.url_entry.get("1.0", "end").splitlines() if line.strip()]
+        if not urls:
+            messagebox.showwarning("Missing URL", "Paste at least one chapter URL first.")
             return
         output_dir = self.output_var.get().strip() or DEFAULT_OUTPUT_DIR
         try:
@@ -113,8 +121,14 @@ class App:
         self.cancel_btn.configure(state="normal")
         self.open_folder_btn.configure(state="disabled")
         self.cancel_flag.clear()
+        self.batch_mode = len(urls) > 1
+        self.pending_output_dir = output_dir
+        self.chapter_label = ""
 
-        self.worker = threading.Thread(target=self._run, args=(url, output_dir), daemon=True)
+        if self.batch_mode:
+            self.worker = threading.Thread(target=self._run_batch, args=(urls, output_dir), daemon=True)
+        else:
+            self.worker = threading.Thread(target=self._run, args=(urls[0], output_dir), daemon=True)
         self.worker.start()
 
     def _run(self, url, output_dir):
@@ -139,6 +153,32 @@ class App:
         except Exception as exc:  # noqa: BLE001 - surface any failure to the user
             self.events.put(("error", str(exc)))
 
+    def _run_batch(self, urls, output_dir):
+        def log(message):
+            self.events.put(("log", message))
+
+        def chapter_progress(done, total):
+            self.events.put(("chapter_progress", (done, total)))
+
+        def panel_progress(done, total):
+            self.events.put(("progress", (done, total)))
+
+        try:
+            results = run_batch(
+                urls=urls,
+                output_dir=output_dir,
+                config=Config(),
+                log=log,
+                chapter_progress=chapter_progress,
+                panel_progress=panel_progress,
+                should_cancel=self.cancel_flag.is_set,
+            )
+            self.events.put(("batch_done", results))
+        except Cancelled:
+            self.events.put(("cancelled", None))
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+            self.events.put(("error", str(exc)))
+
     def cancel_download(self):
         self.cancel_flag.set()
         self.status_var.set("Cancelling...")
@@ -152,9 +192,30 @@ class App:
                     self.log(payload)
                 elif kind == "progress":
                     done, total = payload
-                    if total:
+                    if total and self.batch_mode:
+                        self.status_var.set(f"{self.chapter_label} - extracting panels ({done}/{total})")
+                    elif total:
                         self.progress.configure(maximum=total, value=done)
                         self.status_var.set(f"Extracting panels... ({done}/{total})")
+                elif kind == "chapter_progress":
+                    done, total = payload
+                    self.progress.configure(maximum=total, value=done)
+                    self.chapter_label = f"Chapter {min(done + 1, total)}/{total}"
+                    self.status_var.set(f"{self.chapter_label}...")
+                elif kind == "batch_done":
+                    ok = sum(1 for r in payload if r["ok"])
+                    total = len(payload)
+                    failed = [r for r in payload if not r["ok"]]
+                    if failed:
+                        self.log("")
+                        self.log(f"{len(failed)} chapter(s) failed:")
+                        for r in failed:
+                            self.log(f"  - {r['url']}: {r['error']}")
+                    self.last_output_dir = self.pending_output_dir
+                    self.status_var.set(f"Done - {ok}/{total} chapter(s) succeeded.")
+                    self.progress.configure(value=self.progress["maximum"])
+                    self._finish()
+                    self.open_folder_btn.configure(state="normal")
                 elif kind == "done":
                     self.last_output_dir = payload.get("output_dir")
                     self.status_var.set(f"Done - {len(payload.get('panels', []))} panels extracted.")
